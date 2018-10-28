@@ -31,8 +31,9 @@ class MANN(object):
         #load data
         self.savepath    = savepath
         utils.build_path([savepath+'/normalization'])
-        self.input_data  = utils.Normalize(np.float32(np.loadtxt(datapath+'/Input.txt')), axis = 0, savefile=savepath+'/normalization/X')
-        self.output_data = utils.Normalize(np.float32(np.loadtxt(datapath+'/Output.txt')), axis = 0, savefile=savepath+'/normalization/Y')
+        with tf.variable_scope("Normalising_Data"):
+            self.input_data  = utils.Normalize(np.float32(np.loadtxt(datapath+'/Input.txt')), axis = 0, savefile=savepath+'/normalization/X')
+            self.output_data = utils.Normalize(np.float32(np.loadtxt(datapath+'/Output.txt')), axis = 0, savefile=savepath+'/normalization/Y')
         self.input_size  = self.input_data.shape[1]
         self.output_size = self.output_data.shape[1]
         self.size_data   = self.input_data.shape[0]
@@ -43,7 +44,7 @@ class MANN(object):
         self.hidden_size_gt = hidden_size_gt
         self.index_gating   = index_gating
         
-        #training hyperpara
+        #training hyperparameters
         self.batch_size    = batch_size
         self.epoch         = epoch
         self.total_batch   = int(self.size_data / self.batch_size)
@@ -76,13 +77,25 @@ class MANN(object):
         self.input_size_gt  = len(self.index_gating)
         self.gating_input   = tf.transpose(GT.getInput(self.nn_X, self.index_gating))
         self.gatingNN = Gating(self.rng, self.gating_input, self.input_size_gt, self.num_experts, self.hidden_size_gt, self.nn_keep_prob)
-        #bleding coefficients
+        #blending coefficients
         self.BC = self.gatingNN.BC
+        # Writing Summary
+        blend_coeff = tf.Print(tf.as_string(self.BC),[tf.as_string(self.BC)], message='BC', name='Blending_Coefficients')
+        tf.summary.text('BC', blend_coeff)
         
         #initialize experts
         self.layer0 = ExpertWeights(self.rng, (self.num_experts, self.hidden_size,  self.input_size),   'layer0') # alpha: 4/8*hid*in, beta: 4/8*hid*1
         self.layer1 = ExpertWeights(self.rng, (self.num_experts, self.hidden_size, self.hidden_size),   'layer1') # alpha: 4/8*hid*hid,beta: 4/8*hid*1
         self.layer2 = ExpertWeights(self.rng, (self.num_experts, self.output_size, self.hidden_size),   'layer2') # alpha: 4/8*out*hid,beta: 4/8*out*1 
+        
+        # Writing Summaries
+        tf.summary.histogram("EW_L0A",self.layer0.alpha)
+        tf.summary.histogram("EW_L1A",self.layer1.alpha)
+        tf.summary.histogram("EW_L2A",self.layer2.alpha)
+        
+        tf.summary.histogram("EW_L0B",self.layer0.beta)
+        tf.summary.histogram("EW_L1B",self.layer1.beta)
+        tf.summary.histogram("EW_L2B",self.layer2.beta)
         
         
         #initialize parameters in main NN
@@ -90,32 +103,35 @@ class MANN(object):
         dimension of w: ?* out* in
         dimension of b: ?* out* 1
         """
-        w0  = self.layer0.get_NNweight(self.BC, self.batch_size)
-        w1  = self.layer1.get_NNweight(self.BC, self.batch_size)
-        w2  = self.layer2.get_NNweight(self.BC, self.batch_size)
+        with tf.variable_scope("Motion_Prediction_Network"):
+            
+            w0  = self.layer0.get_NNweight(self.BC, self.batch_size)
+            w1  = self.layer1.get_NNweight(self.BC, self.batch_size)
+            w2  = self.layer2.get_NNweight(self.BC, self.batch_size)
         
-        b0  = self.layer0.get_NNbias(self.BC, self.batch_size)
-        b1  = self.layer1.get_NNbias(self.BC, self.batch_size)
-        b2  = self.layer2.get_NNbias(self.BC, self.batch_size)
+            b0  = self.layer0.get_NNbias(self.BC, self.batch_size)
+            b1  = self.layer1.get_NNbias(self.BC, self.batch_size)
+            b2  = self.layer2.get_NNbias(self.BC, self.batch_size)
         
-        #build main NN
-        H0 = tf.expand_dims(self.nn_X, -1)                     #?*in -> ?*in*1
-        H0 = tf.nn.dropout(H0, keep_prob=self.nn_keep_prob)        
+            #build main NN
+            H0 = tf.expand_dims(self.nn_X, -1)                     #?*in -> ?*in*1
+            H0 = tf.nn.dropout(H0, keep_prob=self.nn_keep_prob)        
         
-        H1 = tf.matmul(w0, H0) + b0                            #?*out*in mul ?*in*1 + ?*out*1 = ?*out*1
-        H1 = tf.nn.elu(H1)             
-        H1 = tf.nn.dropout(H1, keep_prob=self.nn_keep_prob) 
+            H1 = tf.matmul(w0, H0) + b0                            #?*out*in mul ?*in*1 + ?*out*1 = ?*out*1
+            H1 = tf.nn.elu(H1)             
+            H1 = tf.nn.dropout(H1, keep_prob=self.nn_keep_prob) 
         
-        H2 = tf.matmul(w1, H1) + b1
-        H2 = tf.nn.elu(H2)             
-        H2 = tf.nn.dropout(H2, keep_prob=self.nn_keep_prob) 
+            H2 = tf.matmul(w1, H1) + b1
+            H2 = tf.nn.elu(H2)             
+            H2 = tf.nn.dropout(H2, keep_prob=self.nn_keep_prob) 
         
-        H3 = tf.matmul(w2, H2) + b2
-        self.H3 = tf.squeeze(H3, -1)                           #?*out*1 ->?*out  
+            H3 = tf.matmul(w2, H2) + b2
+            self.H3 = tf.squeeze(H3, -1)                           #?*out*1 ->?*out  
         
-        self.loss       = tf.reduce_mean(tf.square(self.nn_Y - self.H3))
+        with tf.variable_scope("MeanSquareError"):
+            self.loss       = tf.reduce_mean(tf.square(self.nn_Y - self.H3))
+        tf.summary.scalar('mean_square_error',self.loss)
         self.optimizer  = AdamOptimizer(learning_rate= self.nn_lr_c, wdc =self.nn_wd_c).minimize(self.loss)
-        
                 
                 
 
@@ -133,7 +149,11 @@ class MANN(object):
         model_path   = self.savepath+ '/model'
         nn_path      = self.savepath+ '/nn'
         weights_path = self.savepath+ '/weights'
-        utils.build_path([model_path, nn_path, weights_path])
+        logs_path    = self.savepath+ '/logs'
+        utils.build_path([model_path, nn_path, weights_path, logs_path])
+        
+        writer = tf.summary.FileWriter(logs_path,self.sess.graph)
+        summaries = tf.summary.merge_all()
         
         #start to train
         print('Learning starts..')
@@ -155,10 +175,12 @@ class MANN(object):
                     
             #print and save training test error 
             print('Epoch:', '%04d' % (epoch + 1), 'trainingloss =', '{:.9f}'.format(avg_cost_train))
+            s = self.sess.run(summaries,feed_dict=feed_dict)
+            writer.add_summary(s,global_step=epoch)
             
             error_train[epoch] = avg_cost_train
             error_train.tofile(model_path+"/error_train.bin")
-
+            
             #save model and weights
             saver.save(self.sess, model_path+"/model.ckpt")
             GT.save_GT((self.sess.run(self.gatingNN.w0), self.sess.run(self.gatingNN.w1), self.sess.run(self.gatingNN.w2)), 
@@ -183,4 +205,5 @@ class MANN(object):
                            weights_nn_path,
                            self.num_experts
                            )
+        writer.close()
         print('Learning Finished')

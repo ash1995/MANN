@@ -28,6 +28,15 @@ class Gating(object):
         self.b0           = tf.Variable(self.initial_bias([hidden_size, 1]) ,name = 'wc0_b')
         self.b1           = tf.Variable(self.initial_bias([hidden_size, 1]) ,name = 'wc1_b')
         self.b2           = tf.Variable(self.initial_bias([output_size, 1]) ,name = 'wc2_b')
+		
+		""" writing summaries"""
+        tf.summary.histogram("GW_L0W",self.w0)
+        tf.summary.histogram("GW_L1W",self.w1)
+        tf.summary.histogram("GW_L2W",self.w2)
+        
+        tf.summary.histogram("GW_L0B",self.b0)
+        tf.summary.histogram("GW_L1B",self.b1)
+        tf.summary.histogram("GW_L2B",self.b2)
         
         """"output blending coefficients"""
         self.BC   = self.fp()
@@ -45,22 +54,25 @@ class Gating(object):
     def initial_bias(self, shape):
         return tf.zeros(shape, tf.float32)
     
-    
-    """forward propogation"""
+		
+	"""forward propogation"""
     def fp(self):
-        H0 = tf.nn.dropout(self.input, keep_prob=self.keep_prob) #input*batch
         
-        H1 = tf.matmul(self.w0, H0) + self.b0                    #hidden*input mul input*batch       
-        H1 = tf.nn.elu(H1)             
-        H1 = tf.nn.dropout(H1, keep_prob=self.keep_prob) 
+        with tf.variable_scope("Gating_Network"):
+            
+            H0 = tf.nn.dropout(self.input, keep_prob=self.keep_prob) #input*batch
         
-        H2 = tf.matmul(self.w1, H1) + self.b1     
-        H2 = tf.nn.elu(H2)             
-        H2 = tf.nn.dropout(H2, keep_prob=self.keep_prob) 
+            H1 = tf.matmul(self.w0, H0) + self.b0                    #hidden*input mul input*batch       
+            H1 = tf.nn.elu(H1)             
+            H1 = tf.nn.dropout(H1, keep_prob=self.keep_prob) 
+        
+            H2 = tf.matmul(self.w1, H1) + self.b1     
+            H2 = tf.nn.elu(H2)             
+            H2 = tf.nn.dropout(H2, keep_prob=self.keep_prob) 
         
         
-        H3 = tf.matmul(self.w2, H2) + self.b2                    #out*hidden   mul hidden*batch
-        H3 = tf.nn.softmax(H3,dim = 0)                           #out*batch
+            H3 = tf.matmul(self.w2, H2) + self.b2                    #out*hidden   mul hidden*batch
+            H3 = tf.nn.softmax(H3,axis = 0)                           #out*batch
         return H3
 
 
